@@ -42,14 +42,15 @@ class YOLOv5ROS2(Node):
         #--------------------模型加载------------------------
 
 
-        weights_path = Path('/home/ws_control/best.pt')
+        weights_path = Path('/home/cqu/test_ws/src/detect/best.pt')
      
 
         self.model = torch.hub.load(
-            repo_or_dir='/home/yolov5',
+            repo_or_dir='/home/cqu/yolov5',
             model='custom',
             path=weights_path,
             source='local',
+            force_reload=True
         )
 
 
