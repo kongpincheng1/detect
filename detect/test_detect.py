@@ -58,10 +58,10 @@ class YOLOv5ROS2(Node):
         self.depth_image = None
 
         # 相机内参（可根据实际标定来改）
-        self.fx = 605.7783203125
-        self.fy = 605.474609375
-        self.cx = 326.34991455078125
-        self.cy = 242.88038635253906
+        self.fx = 604.7058715820312
+        self.fy = 603.9238891601562
+        self.cx = 321.9357604980469
+        self.cy = 248.05108642578125
 
         self.get_logger().info('YOLOv5 ROS 2 Node Initialized!')
 
@@ -87,7 +87,7 @@ class YOLOv5ROS2(Node):
         """同时处理彩色图 + 深度图"""
 
         # ========== 1) 发布画面中心的深度 ==========
-        depth_center = self.depth_image[320, 240] * 0.001  # mm -> m (假设深度图是 mm)
+        depth_center = self.depth_image[240, 320] * 0.001  # mm -> m (假设深度图是 mm)
         center_height = Float32()
         center_height.data = depth_center if depth_center > 0 else 0.0
         self.centerHeight_Pub.publish(center_height)
@@ -114,10 +114,20 @@ class YOLOv5ROS2(Node):
                 median_depth = fallback_depth if fallback_depth > 0 else 0
 
             # (B) 计算圆筒在图像中的宽度像素 => 估计真实直径
-            bbox_width_px = (x2 - x1)
+            # bbox_width_px = (x2 - x1)
+            # depth_left = self.depth_image[int(cy_pixel), int(x1)] * 0.001
+            depth_left = self.get_around_top_depth(int(x1),int(cy_pixel))
+            depth_right = self.get_around_top_depth(int(x2),int(cy_pixel))
+
             real_diameter = 0
-            if median_depth > 0:
-                real_diameter = (bbox_width_px / self.fx) * median_depth
+            if depth_left>0 and depth_right>0:
+                left_world = self.pixel_to_world(x1, cy_pixel, depth_left)
+                right_world = self.pixel_to_world(x2, cy_pixel, depth_right)
+                real_diameter = math.sqrt((left_world[0] - right_world[0])**2 + (left_world[1] - right_world[1])**2)
+
+            
+            # if median_depth > 0:
+            #     real_diameter = (bbox_width_px / self.fx) * median_depth
 
             # (C) 根据阈值分类大小 => 返回 'S' / 'M' / 'B'
             size_label = self.classify_cylinder_size(real_diameter)
@@ -181,7 +191,39 @@ class YOLOv5ROS2(Node):
             return -1.0
         med_mm = np.median(roi_valid)
         return med_mm * 0.001  # 转米
+    
+    def get_around_top_depth(self, x, y, window_size=10):
+        """
+        输入图像坐标 (x, y)，从其周围 window_size × window_size 的区域中
+        取出有效深度值，返回前10大值的平均（单位：米）
+        """
+        h, w = self.depth_image.shape[:2]
 
+        # 区域范围：以 (x, y) 为中心
+        half_win = window_size // 2
+        x1 = max(0, x - half_win)
+        x2 = min(w, x + half_win + 1)
+        y1 = max(0, y - half_win)
+        y2 = min(h, y + half_win + 1)
+
+        # 提取区域深度值并展平为 1D 数组
+        roi = self.depth_image[y1:y2, x1:x2].flatten()
+
+        # 筛选有效深度（去除 0 和异常大值）
+        roi_valid = roi[(roi > 0) & (roi < 10000)]
+
+        if len(roi_valid) == 0:
+            return -1.0
+
+        # 取前10大值（不足10个就取全部）
+        top_k = min(10, len(roi_valid))
+        top10_values = np.sort(roi_valid)[-top_k:]
+
+        # 计算平均值（转米）
+        avg_mm = np.mean(top10_values)
+        return avg_mm * 0.001
+
+    
     def classify_cylinder_size(self, diameter_m):
         """
         根据直径阈值分类: 返回 'S'/'M'/'B'。
