@@ -63,6 +63,9 @@ class YOLOv5ROS2(Node):
         self.cx = 321.9357604980469
         self.cy = 248.05108642578125
 
+
+        self.window_size=50
+
         self.get_logger().info('YOLOv5 ROS 2 Node Initialized!')
 
     def image_callback(self, msg):
@@ -114,20 +117,22 @@ class YOLOv5ROS2(Node):
                 median_depth = fallback_depth if fallback_depth > 0 else 0
 
             # (B) 计算圆筒在图像中的宽度像素 => 估计真实直径
-            # bbox_width_px = (x2 - x1)
+            bbox_width_px = (x2 - x1)
             # depth_left = self.depth_image[int(cy_pixel), int(x1)] * 0.001
             depth_left = self.get_around_top_depth(int(x1),int(cy_pixel))
             depth_right = self.get_around_top_depth(int(x2),int(cy_pixel))
 
             real_diameter = 0
-            if depth_left>0 and depth_right>0:
-                left_world = self.pixel_to_world(x1, cy_pixel, depth_left)
-                right_world = self.pixel_to_world(x2, cy_pixel, depth_right)
-                real_diameter = math.sqrt((left_world[0] - right_world[0])**2 + (left_world[1] - right_world[1])**2)
+            # if depth_left>0 and depth_right>0:
+            #     left_world = self.pixel_to_world(x1, cy_pixel, depth_left)
+            #     right_world = self.pixel_to_world(x2, cy_pixel, depth_right)
+            #     real_diameter = math.sqrt((left_world[0] - right_world[0])**2 + (left_world[1] - right_world[1])**2+(left_world[2] - right_world[2])**2)
+            # else:
+            #     continue
 
             
-            # if median_depth > 0:
-            #     real_diameter = (bbox_width_px / self.fx) * median_depth
+            if median_depth > 0:
+                real_diameter = (bbox_width_px / self.fx) * median_depth
 
             # (C) 根据阈值分类大小 => 返回 'S' / 'M' / 'B'
             size_label = self.classify_cylinder_size(real_diameter)
@@ -153,10 +158,19 @@ class YOLOv5ROS2(Node):
             self.publisher.publish(point_msg)
 
             # ============= 在 rgb_copy 上画框 & 标注 =============
-            cv2.rectangle(rgb_copy, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 2)
+            cv2.rectangle(rgb_copy, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 1)
+            # cv2.rectangle(rgb_copy, (int(x1)-25,int(cy_pixel)-25), (int(x1)+25,int(cy_pixel)+25), (0,255,0), 1)
+            # cv2.rectangle(rgb_copy, (int(x2)-25,int(cy_pixel)-25), (int(x2)+25,int(cy_pixel)+25), (0,255,0), 1)
+            # left_distance_text = f"dis:({left_world[0]:.3f}, {left_world[1]:.3f}, {left_world[2]:.3f})"
+            # right_distance_text = f"dis:({right_world[0]:.3f}, {right_world[1]:.3f}, {right_world[2]:.3f})"
+
             label_text = f"{size_label} {conf:.2f},{real_diameter:.5f}"
+            # cv2.putText(rgb_copy, left_distance_text, (int(x1)-25,int(cy_pixel)-25),
+            #             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 1)
+            # cv2.putText(rgb_copy, right_distance_text, (int(x2)-25,int(cy_pixel)-25),
+            #             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 1)
             cv2.putText(rgb_copy, label_text, (int(x1), int(y1)-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 1)
 
         # ========== 4) 用 OpenCV 显示检测结果 ==========
         cv2.imshow("Detection", rgb_copy)
@@ -192,7 +206,7 @@ class YOLOv5ROS2(Node):
         med_mm = np.median(roi_valid)
         return med_mm * 0.001  # 转米
     
-    def get_around_top_depth(self, x, y, window_size=10):
+    def get_around_top_depth(self, x, y, window_size=50):
         """
         输入图像坐标 (x, y)，从其周围 window_size × window_size 的区域中
         取出有效深度值，返回前10大值的平均（单位：米）
