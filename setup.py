@@ -21,7 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'detect = detect.detect_ros:main',
-            'test = detect.test_detect:main'
+            'test = detect.state_machine:main'
         ],
     },
 )
