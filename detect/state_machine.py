@@ -62,7 +62,6 @@ class YOLOv5ROS2(Node):
         self.storage1 = []  # n13：存储比较后的尺寸（第一组）
         self.storage2 = []  # n19：存储比较后的尺寸（第二组）
         self.bucket_sizes = {}
-        self.DEBOUNCE_N = 4
         # 用来做桶数抖动滤波
         self.is_first_enter = True
 
@@ -112,6 +111,13 @@ class YOLOv5ROS2(Node):
 
         for det, (size_label,_) in self.bucket_sizes.items():
             x1, y1, x2, y2, conf, cls = det
+            center_x = int((x1 + x2) / 2)
+            center_y = int((y1 + y2) / 2)
+            depth = self.depth_image[center_y, center_x] * 0.001  # 深度值以毫米为单位，转为米
+            if depth > 0:
+                # 计算真实世界坐标
+                X, Y, _ = self.pixel_to_world(center_x, center_y, depth)
+                self.process_and_publish(X,Y,size_label)
             # 在桶的位置画框
             cv2.rectangle(rgb_copy, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 1)
             # 标注桶的大小类型（B、M、S）
@@ -151,9 +157,18 @@ class YOLOv5ROS2(Node):
                     self.is_first_enter = False 
                     self.get_logger().info("【n3】检测到3个桶，进入 n4")
                     self.state = "n4"
-                elif bucket_count ==2 and not self.is_first_enter:
-                    self.get_logger().info("【n3】检测到3个桶，执行 n1（识别）")
-                    self.state = "n9"
+                elif bucket_count ==2:
+                    if not self.is_first_enter:
+                        self.get_logger().info("【n3】非第一次检测到2个桶，执行 n9")
+                        self.state = "n9"
+                    else:
+                        self.random_2()
+                elif bucket_count ==1 :
+                    if not self.is_first_enter:
+                        self.get_logger().info("【n3】非第一次检测到1个桶，执行 n16")
+                        self.state = "n16"
+                    else:
+                        self.random_1()
                 else:
                     self.state = "n3"
                     break
@@ -198,14 +213,7 @@ class YOLOv5ROS2(Node):
                 else:
                     self.get_logger().info("【n7】检测到2个桶，进入 n8")
                     self.state = "n8"
-                
-            # elif self.state == "n-1": 
-            #     if bucket_count != 2:
-            #         self.state="n3"
-            #         break
-            #     else:
-            #         self.get_logger().info("【n-1】检测到2个桶，进入 n8")
-            #         self.state = "n8"
+
 
             elif self.state == "n8":
                 # n8：处理2桶模式，设置 flag_b（这里直接置0），进入 n9
@@ -531,6 +539,31 @@ class YOLOv5ROS2(Node):
                 filtered_detections.append(det)
 
         return filtered_detections
+    
+    def random_2(self):
+        self.flag_e=1
+        self.storage1=['B','M']
+        self.state='n9'
+    
+    def random_1(self):
+        self.flag_d=1
+        self.storage2=['M']
+        self.state='n20'
+
+    def process_and_publish(self, X, Y, size_label):
+        """
+        :param X: 原始 X 坐标
+        :param Y: 原始 Y 坐标
+        :param size_label: 标签值
+        """
+        if size_label=='S':
+            point_msg = Point(x=X, y=Y-0.05, z=0.0)
+        elif size_label=='M':
+            point_msg = Point(x=X, y=Y-0.05, z=1.0)
+        else:
+            point_msg = Point(x=X, y=Y-0.05, z=2.0)
+        self.publisher.publish(point_msg)
+        self.get_logger().info(f'Published: {point_msg}')
 
 def main(args=None):
     rclpy.init(args=args)
