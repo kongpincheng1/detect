@@ -6,6 +6,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Point
 from std_msgs.msg import Float32
+from test_interface.msg import Buckets  
 from cv_bridge import CvBridge
 import torch
 import cv2
@@ -27,6 +28,12 @@ class YOLOv5ROS2(Node):
         # 发布目标坐标及其他信息
         self.publisher = self.create_publisher(Point, '/target_position', 10)
         self.centerHeight_Pub = self.create_publisher(Float32, '/current_height', 10)
+
+        #发布目标坐标总表
+        self.publisher_=self.create_publisher(Buckets,'/bucket_topic',10)
+        # self.subscription_=self.create_subscription(Float32MultiArray,'bucket_topic',10)
+        # self.subscription_
+        
 
         # -------------------- 加载 YOLOv5 模型 ------------------------
         weights_path = '/home/cqu/test_ws/best.pt'
@@ -64,6 +71,11 @@ class YOLOv5ROS2(Node):
         self.bucket_sizes = {}
         # 用来做桶数抖动滤波
         self.is_first_enter = True
+        #储存桶的真实坐标
+        self.bucket_msg = Buckets()
+        self.bucket_msg.buckets=[]
+        self.all_buckets=[]
+        self.array=[]
 
         self.get_logger().info('YOLOv5 ROS 2 Node Initialized!')
 
@@ -85,7 +97,8 @@ class YOLOv5ROS2(Node):
 
     def process_images(self):
         """处理彩色图与深度图，并结合状态机流程判断桶的大小及状态转移"""
-
+        self.array.clear()
+        self.bucket_msg.buckets.clear()
         # === 1. 获取中心深度并发布 ===
         depth_center = self.depth_image[320, 240] * 0.001
         center_height = Float32()
@@ -118,6 +131,9 @@ class YOLOv5ROS2(Node):
                 # 计算真实世界坐标
                 X, Y, _ = self.pixel_to_world(center_x, center_y, depth)
                 self.process_and_publish(X,Y,size_label)
+                self.a=self.process_and_publish(X,Y,size_label)
+                self.array.append(self.a)
+                self.bucket_msg.buckets.append(self.a)
             # 在桶的位置画框
             cv2.rectangle(rgb_copy, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 1)
             # 标注桶的大小类型（B、M、S）
@@ -125,6 +141,17 @@ class YOLOv5ROS2(Node):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
         cv2.imshow("Detection", rgb_copy)
         cv2.waitKey(1)
+        '''for x in self.all_buckets:
+            self.one_bucket=Point()
+            self.one_bucket.x=float(x[0])
+            self.one_bucket.x=float(x[1])
+            self.one_bucket.x=float(x[2])
+            self.float_array.buckets.append(self.one_bucket)'''
+        
+        #发布桶当前帧所有点坐标总表
+        self.get_logger().info(f"Received current buckets:{self.array}\n")
+        self.publisher_.publish(self.bucket_msg)
+        
 
     @torch.no_grad
     def detect_objects(self, image):
@@ -563,7 +590,8 @@ class YOLOv5ROS2(Node):
         else:
             point_msg = Point(x=X, y=Y-0.05, z=2.0)
         self.publisher.publish(point_msg)
-        self.get_logger().info(f'Published: {point_msg}')
+        #self.get_logger().info(f'Published: {point_msg}')
+        return point_msg
 
 def main(args=None):
     rclpy.init(args=args)
