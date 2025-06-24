@@ -26,7 +26,6 @@ class YOLOv5ROS2(Node):
             Image, '/camera/camera/depth/image_rect_raw', self.depth_callback, 10)
 
         # 发布目标坐标及其他信息
-        #self.publisher = self.create_publisher(Point, '/target_position', 10)
         self.centerHeight_Pub = self.create_publisher(Float32, '/current_height', 10)
 
         #发布目标坐标总表
@@ -36,17 +35,9 @@ class YOLOv5ROS2(Node):
         
 
         # -------------------- 加载 YOLOv5 模型 ------------------------
-        weights_path = '/home/cqu/test_ws/best.pt'
-        self.model = torch.hub.load(
-            repo_or_dir='/home/cqu/yolov5',
-            model='custom',
-            path=weights_path,
-            source='local',
-            force_reload=True
-        )
-        self.model.eval()
-        # 或使用 ultralytics 的版本：
-        # self.model = YOLO("/home/cqu/test_ws/best.pt") 
+        weights_path = '/home/weights/best.engine'
+        self.model = YOLO(weights_path)
+
 
         self.bridge = CvBridge()
         self.color_image = None
@@ -158,13 +149,18 @@ class YOLOv5ROS2(Node):
         self.publisher_.publish(self.bucket_msg)
         
 
-    @torch.no_grad
+    @torch.no_grad()
     def detect_objects(self, image):
-        results = self.model(image, size=320)
-        detections = results.xyxy[0].cpu().numpy()  # [N, 6] (x1, y1, x2, y2, conf, cls)
-        detections = detections[detections[:, 4] > 0.4]  # 过滤低置信度
-        return detections
-
+        results = self.model(image)[0]
+        detections = []
+        for box in results.boxes:
+            x1, y1, x2, y2 = map(float, box.xyxy[0])
+            conf = float(box.conf[0])
+            cls = float(box.cls[0])
+            if conf > 0.4:
+                detections.append([x1, y1, x2, y2, conf, cls])
+        return np.array(detections)
+    
     def is_bucket(self, detection):
         """
         根据检测到的类别或尺寸判断当前目标是否为桶对象。
