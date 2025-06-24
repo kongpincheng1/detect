@@ -26,7 +26,7 @@ class YOLOv5ROS2(Node):
             Image, '/camera/camera/depth/image_rect_raw', self.depth_callback, 10)
 
         # 发布目标坐标及其他信息
-        self.publisher = self.create_publisher(Point, '/target_position', 10)
+        #self.publisher = self.create_publisher(Point, '/target_position', 10)
         self.centerHeight_Pub = self.create_publisher(Float32, '/current_height', 10)
 
         #发布目标坐标总表
@@ -115,13 +115,13 @@ class YOLOv5ROS2(Node):
         # === 3. 根据检测结果更新状态机 ===
         # 这里你需要将状态机中基于 input 的判断，替换为使用检测结果、尺寸比较等逻辑。
         # 例如：
+
         self.run_state_machine(bucket_detections, bucket_count)
 
-        # === 4. 遍历检测目标并做可视化标注 ===
+        # === 4. 遍历检测目标并做可视化标注 ===      
         rgb_copy = self.color_image.copy()
         edge_margin = 10
         cv2.rectangle(rgb_copy, (int(edge_margin), int(edge_margin)), (int(640-edge_margin), int(480-edge_margin)), (0,255,0), 1)
-
         for det, (size_label,_) in self.bucket_sizes.items():
             x1, y1, x2, y2, conf, cls = det
             center_x = int((x1 + x2) / 2)
@@ -132,8 +132,13 @@ class YOLOv5ROS2(Node):
                 X, Y, _ = self.pixel_to_world(center_x, center_y, depth)
                 self.process_and_publish(X,Y,size_label)
                 self.a=self.process_and_publish(X,Y,size_label)
-                self.array.append(self.a)
-                self.bucket_msg.buckets.append(self.a)
+
+                if bucket_count == 0:
+                    self.array=[]
+                else:
+                    self.array.append(self.a)
+                    self.bucket_msg.buckets.append(self.a)
+            
             # 在桶的位置画框
             cv2.rectangle(rgb_copy, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 1)
             # 标注桶的大小类型（B、M、S）
@@ -589,9 +594,11 @@ class YOLOv5ROS2(Node):
             point_msg = Point(x=X, y=Y-0.05, z=1.0)
         else:
             point_msg = Point(x=X, y=Y-0.05, z=2.0)
-        self.publisher.publish(point_msg)
-        #self.get_logger().info(f'Published: {point_msg}')
+
         return point_msg
+        #self.publisher.publish(point_msg)（xxx）
+        #clpy.init(args=args)
+    #node = YOLOv5ROS2()
 
 def main(args=None):
     rclpy.init(args=args)

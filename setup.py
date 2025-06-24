@@ -21,7 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'detect = detect.detect_ros:main',
-            'test = detect.state_machine:main'
+            'test = detect.state_machine:main',  # 改为 state_machine 而非 test
+            'bucket_filter = detect.bucket_filter:main',  # 添加此行
         ],
     },
 )
