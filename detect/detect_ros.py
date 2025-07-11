@@ -23,10 +23,12 @@ class YOLOv5ROS2(Node):
         self.declare_parameter('conf_threshold', 0.4)
         self.declare_parameter('color_topic', '/camera/camera/color/image_raw')
         self.declare_parameter('depth_topic', '/camera/camera/depth/image_rect_raw')
-        self.declare_parameter('cam.fx', 604.7058715820312)
-        self.declare_parameter('cam.fy', 603.9238891601562)
-        self.declare_parameter('cam.cx', 321.9357604980469)
-        self.declare_parameter('cam.cy', 248.05108642578125)
+        self.declare_parameter('cam.fx', 605.7783203125)
+        self.declare_parameter('cam.fy', 605.474609375)
+        self.declare_parameter('cam.cx', 326.34991455078125)
+        self.declare_parameter('cam.cy', 242.88038635253906)
+        # <<< 新增：声明用于控制图像显示的参数，默认为False (不显示)
+        self.declare_parameter('show_image', False) 
 
         # --- 获取参数 ---
         weights_path = self.get_parameter('weights_path').get_parameter_value().string_value
@@ -37,6 +39,8 @@ class YOLOv5ROS2(Node):
         self.fy = self.get_parameter('cam.fy').get_parameter_value().double_value
         self.cx = self.get_parameter('cam.cx').get_parameter_value().double_value
         self.cy = self.get_parameter('cam.cy').get_parameter_value().double_value
+        # <<< 新增：获取show_image参数的值
+        self.show_image = self.get_parameter('show_image').get_parameter_value().bool_value
 
         # --- 发布者 ---
         self.publisher = self.create_publisher(Point, '/target_position', 10)
@@ -57,6 +61,10 @@ class YOLOv5ROS2(Node):
         self.ts.registerCallback(self.synced_callback)
 
         self.get_logger().info('YOLOv5 ROS 2 Node Initialized!')
+        if self.show_image:
+            self.get_logger().info('Debug image display is ENABLED.')
+        else:
+            self.get_logger().info('Debug image display is DISABLED.')
 
     def synced_callback(self, color_msg, depth_msg):
         """
@@ -85,8 +93,11 @@ class YOLOv5ROS2(Node):
         # --- YOLO 目标检测 ---
         results = self.detect_objects(color_image)
         
+        # <<< 修改：根据标志位决定是否显示图像
         # --- (可选) 调试显示 ---
-        self.show_detections(color_image.copy(), results)
+        if self.show_image:
+            # 传入原图的拷贝，避免在原图上画框影响后续处理
+            self.show_detections(color_image.copy(), results)
 
         # --- 处理每个检测结果 ---
         for result in results:
@@ -161,6 +172,7 @@ def main(args=None):
         node.get_logger().info('KeyboardInterrupt, shutting down.')
     finally:
         node.destroy_node()
+        # 确保在程序退出时关闭所有OpenCV窗口
         cv2.destroyAllWindows()
         rclpy.shutdown()
 
