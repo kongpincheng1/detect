@@ -13,6 +13,7 @@ import torch
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import os
 
 class YOLOv5ROS2(Node):
     def __init__(self):
@@ -22,13 +23,16 @@ class YOLOv5ROS2(Node):
         self.declare_parameter('weights_path', '/home/weights/best.engine')
         self.declare_parameter('conf_threshold', 0.4)
         self.declare_parameter('color_topic', '/camera/camera/color/image_raw')
-        self.declare_parameter('depth_topic', '/camera/camera/depth/image_rect_raw')
+        self.declare_parameter('depth_topic', '/camera/camera/aligned_depth_to_color/image_raw')
         self.declare_parameter('cam.fx', 605.7783203125)
         self.declare_parameter('cam.fy', 605.474609375)
         self.declare_parameter('cam.cx', 326.34991455078125)
         self.declare_parameter('cam.cy', 242.88038635253906)
-        # <<< 新增：声明用于控制图像显示的参数，默认为False (不显示)
         self.declare_parameter('show_image', False) 
+        # <<< 修改：参数名从 record_depth_video 改为 record_rgb_video，更清晰
+        self.declare_parameter('record_rgb_video', False)
+        self.declare_parameter('video_output_path', '/home/depth_videos')
+
 
         # --- 获取参数 ---
         weights_path = self.get_parameter('weights_path').get_parameter_value().string_value
@@ -39,8 +43,11 @@ class YOLOv5ROS2(Node):
         self.fy = self.get_parameter('cam.fy').get_parameter_value().double_value
         self.cx = self.get_parameter('cam.cx').get_parameter_value().double_value
         self.cy = self.get_parameter('cam.cy').get_parameter_value().double_value
-        # <<< 新增：获取show_image参数的值
         self.show_image = self.get_parameter('show_image').get_parameter_value().bool_value
+        # <<< 修改：获取新参数，并使用新变量名 self.record_rgb
+        self.record_rgb = self.get_parameter('record_rgb_video').get_parameter_value().bool_value
+        self.video_path = self.get_parameter('video_output_path').get_parameter_value().string_value
+
 
         # --- 发布者 ---
         self.publisher = self.create_publisher(Point, '/target_position', 10)
@@ -60,27 +67,88 @@ class YOLOv5ROS2(Node):
         )
         self.ts.registerCallback(self.synced_callback)
 
+        # --- 视频录制相关初始化 ---
+        self.video_writer = None
+        self.is_recording = False
+        if self.record_rgb: # <<< 修改：检查 self.record_rgb
+            # 确保视频保存目录存在
+            if not os.path.exists(self.video_path):
+                os.makedirs(self.video_path)
+                self.get_logger().info(f"Created video directory: {self.video_path}")
+
         self.get_logger().info('YOLOv5 ROS 2 Node Initialized!')
-        if self.show_image:
-            self.get_logger().info('Debug image display is ENABLED.')
+        if self.show_image: self.get_logger().info('Debug image display is ENABLED.')
+        
+        # <<< 修改：更新日志信息
+        if self.record_rgb:
+            self.get_logger().info(f'RGB video recording is ENABLED. Output path: {self.video_path}')
         else:
-            self.get_logger().info('Debug image display is DISABLED.')
+            self.get_logger().info('RGB video recording is DISABLED.')
+
+
+    def destroy_node(self):
+        """在节点销毁时调用的清理函数，确保资源被释放"""
+        self.get_logger().info("Node is shutting down, attempting to clean up...")
+        if self.video_writer is not None:
+            self.get_logger().info("Releasing video writer...")
+            self.video_writer.release()
+            self.get_logger().info("Video writer released.")
+        else:
+            self.get_logger().warn("Video writer was not initialized, no video to save.")
+        cv2.destroyAllWindows()
+        super().destroy_node()
 
     def synced_callback(self, color_msg, depth_msg):
-        """
-        同步后的图像回调
-        """
         try:
+            # 彩色图使用 bgr8 格式，它与OpenCV原生格式兼容
             color_image = self.bridge.imgmsg_to_cv2(color_msg, desired_encoding='bgr8')
             depth_image = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding='passthrough')
             self.process_images(color_image, depth_image)
         except Exception as e:
             self.get_logger().error(f"Failed to process synced images: {e}")
 
+    def get_unique_filename(self):
+        """生成一个唯一的视频文件名，避免覆盖"""
+        # <<< 修改：更改视频文件名的前缀
+        base_name = "rgb_video"
+        ext = ".avi"
+        i = 1
+        while True:
+            file_name = f"{base_name}_{i}{ext}"
+            full_path = os.path.join(self.video_path, file_name)
+            if not os.path.exists(full_path):
+                return full_path
+            i += 1
+
     def process_images(self, color_image, depth_image):
-        """
-        同时处理彩色图像和深度图像
-        """
+        # --- (可选) 视频录制 ---
+        # <<< 修改：整个录制逻辑现在针对 color_image
+        if self.record_rgb and not self.is_recording:
+            try:
+                filename = self.get_unique_filename()
+                fps = 15 
+                # 从彩色图像获取高度和宽度
+                h, w, _ = color_image.shape
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h), isColor=True)
+                
+                if not self.video_writer.isOpened():
+                    self.get_logger().error(f"!!! Failed to open video writer for file: {filename}")
+                    self.record_rgb = False
+                else:
+                    self.is_recording = True
+                    self.get_logger().info(f"SUCCESS: Started recording RGB video to {filename}")
+            except Exception as e:
+                self.get_logger().error(f"!!! EXCEPTION while creating video writer: {e}")
+                self.record_rgb = False
+
+        # 如果正在录制，则写入彩色图像帧
+        if self.is_recording and self.video_writer is not None:
+            # 直接写入彩色图像，无需任何转换
+            self.video_writer.write(color_image)
+            
+        # --- (以下检测逻辑保持不变) ---
+
         # --- 获取并发布中心点高度 ---
         height, width = depth_image.shape
         center_y, center_x = height // 2, width // 2
@@ -93,10 +161,8 @@ class YOLOv5ROS2(Node):
         # --- YOLO 目标检测 ---
         results = self.detect_objects(color_image)
         
-        # <<< 修改：根据标志位决定是否显示图像
         # --- (可选) 调试显示 ---
         if self.show_image:
-            # 传入原图的拷贝，避免在原图上画框影响后续处理
             self.show_detections(color_image.copy(), results)
 
         # --- 处理每个检测结果 ---
@@ -104,18 +170,13 @@ class YOLOv5ROS2(Node):
             x1, y1, x2, y2, conf, cls = result
             center_x_pixel = int((x1 + x2) / 2)
             center_y_pixel = int((y1 + y2) / 2)
-
-            # 获取稳健的深度值
             depth = self.get_robust_depth(depth_image, center_x_pixel, center_y_pixel)
             
             if depth > 0:
-                # 计算真实世界坐标
                 X, Y, Z = self.pixel_to_world(center_x_pixel, center_y_pixel, depth)
-                # 发布坐标
                 self.process_and_publish(X, Y, Z)
 
     def show_detections(self, image, detections):
-        """用于调试，显示检测框"""
         for det in detections:
             x1, y1, x2, y2, _, _ = det
             cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
@@ -136,16 +197,10 @@ class YOLOv5ROS2(Node):
 
     def get_robust_depth(self, depth_image, x, y, size=5):
         h, w = depth_image.shape
-        x1 = max(0, x - size // 2)
-        x2 = min(w - 1, x + size // 2)
-        y1 = max(0, y - size // 2)
-        y2 = min(h - 1, y + size // 2)
-
-        patch = depth_image[y1:y2+1, x1:x2+1]
-        valid_depths = patch[patch > 0]
-        
-        if valid_depths.size > 0:
-            return np.median(valid_depths) * 0.001
+        x1 = max(0, x - size // 2); x2 = min(w - 1, x + size // 2)
+        y1 = max(0, y - size // 2); y2 = min(h - 1, y + size // 2)
+        patch = depth_image[y1:y2+1, x1:x2+1]; valid_depths = patch[patch > 0]
+        if valid_depths.size > 0: return np.median(valid_depths) * 0.001
         return 0.0
 
     def pixel_to_world(self, u, v, depth):
@@ -155,11 +210,7 @@ class YOLOv5ROS2(Node):
         return X, Y, Z
 
     def process_and_publish(self, X, Y, Z):
-        # 注意: 此处的坐标变换非常依赖于你的具体应用
-        # y=Y-0.05 可能是校准偏移
-        # z=0.0 是将点投影到XY平面，这会丢失高度信息。
-        # 如果需要3D信息，应该使用Z。
-        point_msg = Point(x=X, y=Y, z=Z) # 使用计算出的 Z
+        point_msg = Point(x=X, y=Y, z=Z)
         self.publisher.publish(point_msg)
         self.get_logger().info(f'Published Target: X={point_msg.x:.3f}, Y={point_msg.y:.3f}, Z={point_msg.z:.3f}')
 
@@ -169,11 +220,9 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('KeyboardInterrupt, shutting down.')
+        node.get_logger().info('KeyboardInterrupt received, shutting down.')
     finally:
         node.destroy_node()
-        # 确保在程序退出时关闭所有OpenCV窗口
-        cv2.destroyAllWindows()
         rclpy.shutdown()
 
 if __name__ == '__main__':
