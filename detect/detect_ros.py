@@ -4,6 +4,7 @@ warnings.simplefilter('ignore', category=FutureWarning)
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 import message_filters
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Point
@@ -48,9 +49,15 @@ class YOLOv5ROS2(Node):
         self.record_rgb = self.get_parameter('record_rgb_video').get_parameter_value().bool_value
         self.video_path = self.get_parameter('video_output_path').get_parameter_value().string_value
 
+        qos_profile_target = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
 
         # --- 发布者 ---
-        self.publisher = self.create_publisher(Point, '/target_position', 10)
+        self.publisher = self.create_publisher(Point, '/target_position', qos_profile_target)
         self.centerHeight_Pub = self.create_publisher(Float32, '/current_height', 10)
 
         # --- 模型加载 ---
@@ -63,7 +70,7 @@ class YOLOv5ROS2(Node):
         color_sub = message_filters.Subscriber(self, Image, color_topic, qos_profile=qos_profile_sensor_data)
         depth_sub = message_filters.Subscriber(self, Image, depth_topic, qos_profile=qos_profile_sensor_data)
         self.ts = message_filters.ApproximateTimeSynchronizer(
-            [color_sub, depth_sub], queue_size=10, slop=0.1
+            [color_sub, depth_sub], queue_size=10, slop=0.5
         )
         self.ts.registerCallback(self.synced_callback)
 
