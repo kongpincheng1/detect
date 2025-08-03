@@ -6,7 +6,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 import message_filters
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import Point
 from std_msgs.msg import Float32
 from cv_bridge import CvBridge
@@ -21,15 +21,13 @@ class YOLOv5ROS2(Node):
         super().__init__('yolov5_ros2')
 
         # --- 参数声明 ---
-        self.declare_parameter('weights_path', '/home/weights/best.engine')
+        self.declare_parameter('weights_path', '/home/kpc/weights/best.pt')
         self.declare_parameter('conf_threshold', 0.4)
         self.declare_parameter('color_topic', '/camera/camera/color/image_raw')
         self.declare_parameter('depth_topic', '/camera/camera/aligned_depth_to_color/image_raw')
-        self.declare_parameter('cam.fx', 605.7783203125)
-        self.declare_parameter('cam.fy', 605.474609375)
-        self.declare_parameter('cam.cx', 326.34991455078125)
-        self.declare_parameter('cam.cy', 242.88038635253906)
-        self.declare_parameter('show_image', False) 
+        self.declare_parameter('camera_info_topic', '/camera/camera/color/camera_info')
+
+        self.declare_parameter('show_image', True) 
         # <<< 修改：参数名从 record_depth_video 改为 record_rgb_video，更清晰
         self.declare_parameter('record_rgb_video', False)
         self.declare_parameter('video_output_path', '/home/depth_videos')
@@ -40,10 +38,8 @@ class YOLOv5ROS2(Node):
         self.conf_threshold = self.get_parameter('conf_threshold').get_parameter_value().double_value
         color_topic = self.get_parameter('color_topic').get_parameter_value().string_value
         depth_topic = self.get_parameter('depth_topic').get_parameter_value().string_value
-        self.fx = self.get_parameter('cam.fx').get_parameter_value().double_value
-        self.fy = self.get_parameter('cam.fy').get_parameter_value().double_value
-        self.cx = self.get_parameter('cam.cx').get_parameter_value().double_value
-        self.cy = self.get_parameter('cam.cy').get_parameter_value().double_value
+        camera_info_topic = self.get_parameter('camera_info_topic').get_parameter_value().string_value
+
         self.show_image = self.get_parameter('show_image').get_parameter_value().bool_value
         # <<< 修改：获取新参数，并使用新变量名 self.record_rgb
         self.record_rgb = self.get_parameter('record_rgb_video').get_parameter_value().bool_value
@@ -54,6 +50,26 @@ class YOLOv5ROS2(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1
+        )
+        
+        qos_profile_intrinsics = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        self.fx = 0.0
+        self.fy = 0.0
+        self.cx = 0.0
+        self.cy = 0.0
+        self.intrinsics_received = False # 用于标记是否已收到内参
+        
+        self.camera_info_sub = self.create_subscription(
+            CameraInfo,
+            camera_info_topic,
+            self.camera_info_callback,
+            qos_profile_intrinsics  # 使用这个QoS可以确保我们能收到相机节点最后一次发布的"静态"信息
         )
 
         # --- 发布者 ---
@@ -105,7 +121,27 @@ class YOLOv5ROS2(Node):
         cv2.destroyAllWindows()
         super().destroy_node()
 
+    def camera_info_callback(self, msg):
+        """
+        接收一次相机内参并存储，然后销毁订阅。
+        """
+        if not self.intrinsics_received:
+            self.fx = msg.k[0]  # K[0] is fx
+            self.fy = msg.k[4]  # K[4] is fy
+            self.cx = msg.k[2]  # K[2] is cx
+            self.cy = msg.k[5]  # K[5] is cy
+            self.intrinsics_received = True
+            self.get_logger().info('Camera intrinsics received successfully!')
+            self.get_logger().info(f"  fx: {self.fx}, fy: {self.fy}")
+            self.get_logger().info(f"  cx: {self.cx}, cy: {self.cy}")
+            # 销毁订阅，因为我们只需要这个信息一次
+            self.destroy_subscription(self.camera_info_sub)
+
     def synced_callback(self, color_msg, depth_msg):
+        if not self.intrinsics_received:
+            self.get_logger().warn('Waiting for camera intrinsics, skipping frame...', throttle_duration_sec=2)
+            return
+        
         try:
             # 彩色图使用 bgr8 格式，它与OpenCV原生格式兼容
             color_image = self.bridge.imgmsg_to_cv2(color_msg, desired_encoding='bgr8')
@@ -192,7 +228,7 @@ class YOLOv5ROS2(Node):
 
     @torch.no_grad()
     def detect_objects(self, image):
-        results = self.model(image)[0]
+        results = self.model(image,verbose=False)[0]
         detections = []
         for box in results.boxes:
             x1, y1, x2, y2 = map(float, box.xyxy[0])
