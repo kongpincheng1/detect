@@ -21,13 +21,13 @@ class YOLOv5ROS2(Node):
         super().__init__('yolov5_ros2')
 
         # --- 参数声明 ---
-        self.declare_parameter('weights_path', '/home/kpc/weights/best.pt')
+        self.declare_parameter('weights_path', '/home/weights/0728.engine')
         self.declare_parameter('conf_threshold', 0.4)
         self.declare_parameter('color_topic', '/camera/camera/color/image_raw')
         self.declare_parameter('depth_topic', '/camera/camera/aligned_depth_to_color/image_raw')
         self.declare_parameter('camera_info_topic', '/camera/camera/color/camera_info')
 
-        self.declare_parameter('show_image', True) 
+        self.declare_parameter('show_image', False) 
         # <<< 修改：参数名从 record_depth_video 改为 record_rgb_video，更清晰
         self.declare_parameter('record_rgb_video', False)
         self.declare_parameter('video_output_path', '/home/depth_videos')
@@ -86,7 +86,7 @@ class YOLOv5ROS2(Node):
         color_sub = message_filters.Subscriber(self, Image, color_topic, qos_profile=qos_profile_sensor_data)
         depth_sub = message_filters.Subscriber(self, Image, depth_topic, qos_profile=qos_profile_sensor_data)
         self.ts = message_filters.ApproximateTimeSynchronizer(
-            [color_sub, depth_sub], queue_size=10, slop=0.5
+            [color_sub, depth_sub], queue_size=5, slop=0.04
         )
         self.ts.registerCallback(self.synced_callback)
 
