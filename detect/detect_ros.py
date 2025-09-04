@@ -243,7 +243,7 @@ class YOLOv5ROS2(Node):
         x1 = max(0, x - size // 2); x2 = min(w - 1, x + size // 2)
         y1 = max(0, y - size // 2); y2 = min(h - 1, y + size // 2)
         patch = depth_image[y1:y2+1, x1:x2+1]; valid_depths = patch[patch > 0]
-        if valid_depths.size > 0: return np.median(valid_depths) * 0.001
+        if valid_depths.size > 0: return np.percentile(valid_depths, 95)  * 0.001
         return 0.0
 
     def pixel_to_world(self, u, v, depth):
